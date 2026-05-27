@@ -23,25 +23,15 @@ jobs:
       checks: write
 
     steps:
-      # Generate a GitHub App installation token to retrigger CI workflows on push
-      # https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/making-authenticated-api-requests-with-a-github-app-in-a-github-actions-workflow
-      - name: Generate GitHub App Token
-        id: skyramp-testbot-app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.SKYRAMP_TESTBOT_APP_ID }}
-          private-key: ${{ secrets.SKYRAMP_TESTBOT_APP_PRIVATE_KEY }}
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ steps.skyramp-testbot-app-token.outputs.token }}
 
       - uses: skyramp/testbot@v0.10.1
         with:
           skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE_FILE }}
           anthropicApiKey: ${{ secrets.SKYRAMP_TESTBOT_API_KEY }}
-          githubToken: ${{ steps.skyramp-testbot-app-token.outputs.token }}
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
 
           # Build and start Directus from the PR branch using SQLite.
           targetSetupCommand: 'docker compose -f docker-compose.eval.yml up -d --build'
