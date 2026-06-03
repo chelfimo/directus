@@ -2904,6 +2904,20 @@ operations:
     sign: Sign Token
     verify: Verify Token
     decode: Decode Token
+  hash:
+    name: Hash
+    description: Generate cryptographic hashes of data
+    algorithm: Algorithm
+    algorithm_note: MD5 and SHA-1 are not recommended for security-sensitive applications
+    value: Value
+    value_placeholder: Enter the value to hash...
+    output_format: Output Format
+    hex: Hexadecimal
+    base64: Base64
+    hmac: Use HMAC
+    hmac_note: HMAC provides message authentication using a secret key
+    secret: Secret Key
+    secret_placeholder: Enter the HMAC secret key...
   log:
     name: Log to Console
     description: Output something to the console
