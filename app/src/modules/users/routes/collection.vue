@@ -19,6 +19,7 @@ import { useCollectionPermissions } from '@/composables/use-permissions';
 import { usePreset } from '@/composables/use-preset';
 import { useServerStore } from '@/stores/server';
 import { useUserStore } from '@/stores/user';
+import { useUserInvitesStore } from '@/stores/user-invites';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { PrivateViewHeaderBarActionButton } from '@/views/private';
 import { PrivateView } from '@/views/private';
@@ -37,9 +38,12 @@ const { roles } = useNavigation(role);
 const userInviteModalActive = ref(false);
 const serverStore = useServerStore();
 const userStore = useUserStore();
+const userInvitesStore = useUserInvitesStore();
 
 const layoutRef = ref();
 const selection = ref<string[]>([]);
+
+const pendingInvites = computed(() => userInvitesStore.pending);
 
 const { layout, layoutOptions, layoutQuery, filter, search, resetPreset } = usePreset(ref('directus_users'));
 const { addNewLink } = useLinks();
@@ -100,10 +104,12 @@ const { layoutWrapper } = useLayout(layout);
 
 onBeforeRouteLeave(() => {
 	selection.value = [];
+	userInvitesStore.clear();
 });
 
 onBeforeRouteUpdate(() => {
 	selection.value = [];
+	userInvitesStore.clear();
 });
 
 async function refresh() {
@@ -277,6 +283,22 @@ function clearFilters() {
 
 			<UsersInvite v-if="canInviteUsers" v-model="userInviteModalActive" @update:model-value="refresh" />
 
+			<!-- Optimistic "pending invitees" strip (DR-UC01). Rendered above the generic users list
+			     because the tabular layout has no per-row template to project pending rows into. Each
+			     row clears once the invite reconciles (2xx) or reverts (4xx/5xx). -->
+			<div v-if="pendingInvites.length > 0" class="pending-invites" data-testid="user-invite-pending-strip">
+				<div
+					v-for="invite in pendingInvites"
+					:key="invite.id"
+					class="pending-invite"
+					data-testid="user-invite-pending"
+				>
+					<VIcon name="hourglass_empty" small />
+					<span class="pending-email">{{ invite.email }}</span>
+					<span class="pending-label">{{ $t('loading') }}</span>
+				</div>
+			</div>
+
 			<component :is="`layout-${layout}`" v-bind="layoutState">
 				<template #no-results>
 					<VInfo v-if="!filter && !search" :title="$t('user_count', 0)" icon="people_alt" center>
@@ -343,5 +365,33 @@ function clearFilters() {
 
 .header-icon {
 	--v-button-color-disabled: var(--theme--foreground);
+}
+
+.pending-invites {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 12px var(--content-padding) 0;
+}
+
+.pending-invite {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	color: var(--theme--foreground-subdued);
+	background-color: var(--theme--background-subdued);
+	border: var(--theme--border-width) dashed var(--theme--border-color);
+	border-radius: var(--theme--border-radius);
+
+	.pending-email {
+		color: var(--theme--foreground);
+		font-family: var(--theme--fonts--monospace--font-family);
+	}
+
+	.pending-label {
+		margin-inline-start: auto;
+		font-size: 0.85em;
+	}
 }
 </style>
