@@ -13,6 +13,9 @@ export type ManualSortData = {
 	to: string | number;
 };
 
+/** Observable result-state of the items list, driven by the search/fetch lifecycle (DR-UC04). */
+export type ItemsState = 'idle' | 'loading' | 'results' | 'empty' | 'error';
+
 export type UsableItems = {
 	itemCount: Ref<number | null>;
 	totalCount: Ref<number | null>;
@@ -21,6 +24,7 @@ export type UsableItems = {
 	loading: Ref<boolean>;
 	loadingItemCount: Ref<boolean>;
 	error: Ref<any>;
+	state: ComputedRef<ItemsState>;
 	changeManualSort: (data: ManualSortData) => Promise<void>;
 	getItems: () => Promise<void>;
 	getTotalCount: () => Promise<void>;
@@ -63,6 +67,20 @@ export function useItems(collection: Ref<string | null>, query: ComputedQuery): 
 		if (itemCount.value === null) return 1;
 		if (itemCount.value < (unref(limit) ?? 100)) return 1;
 		return Math.ceil(itemCount.value / (unref(limit) ?? 100));
+	});
+
+	const hasSearch = computed(() => {
+		const value = unref(search);
+		return typeof value === 'string' && value.trim().length > 0;
+	});
+
+	// Result-state machine for the list region. The enum only distinguishes results/empty while a
+	// search is active; with no search term the list is "idle" regardless of how many items it shows.
+	const state = computed<ItemsState>(() => {
+		if (error.value) return 'error';
+		if (loading.value) return 'loading';
+		if (!hasSearch.value) return 'idle';
+		return items.value.length > 0 ? 'results' : 'empty';
 	});
 
 	let itemsAbort: AbortController | null = null;
@@ -162,6 +180,7 @@ export function useItems(collection: Ref<string | null>, query: ComputedQuery): 
 		loading,
 		loadingItemCount,
 		error,
+		state,
 		changeManualSort,
 		getItems,
 		getItemCount,
