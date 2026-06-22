@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.skyramp-testbot-app-token.outputs.token }}
 
-      - uses: skyramp/testbot@v0.10.0
+      - uses: skyramp/testbot@v0.10.4
         with:
           skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE_FILE }}
           anthropicApiKey: ${{ secrets.SKYRAMP_TESTBOT_API_KEY }}
@@ -49,8 +49,20 @@ jobs:
           # The full build can be slow; give it room before the readiness check times out.
           targetReadyCheckTimeout: '300'
 
-          # Pin the MCP version that ships the DOM Analyzer + URL-cache work.
-          skyrampMcpVersion: '0.2.0-rc.1'
+          # Log into the freshly-booted Directus and capture the admin JWT for test execution.
+          # Creds match the seeded admin in docker-compose.eval.yml (eval SUT only, not real secrets).
+          authTokenCommand: >-
+            curl -s -X POST http://localhost:8055/auth/login
+            -H 'Content-Type: application/json'
+            -d '{"email":"admin@example.com","password":"password"}'
+            | jq -r '.data.access_token'
+
+          # Browser login for UI test recording/execution (same seeded admin).
+          uiCredentials: 'admin@example.com:password'
+
+          # Pin the MCP (generation engine) and executor (Docker image) versions.
+          skyrampMcpVersion: '0.2.6'
+          skyrampExecutorVersion: 'v1.3.28'
 
           # Conservative limits for first runs; bump later if cost is fine.
           maxRecommendations: '10'
