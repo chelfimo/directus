@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useSync } from '@directus/composables';
 import { useShortcut } from '@directus/composables';
+import type { ItemsState } from '@directus/composables';
 import type { Field, Filter, Item, ShowSelect } from '@directus/types';
 import { ComponentPublicInstance, inject, ref, Ref, toRefs, watch } from 'vue';
 import VDivider from '@/components/v-divider.vue';
@@ -34,6 +35,7 @@ interface Props {
 	loading: boolean;
 	loadingItemCount: boolean;
 	error?: any;
+	state: ItemsState;
 	totalPages: number;
 	tableSort?: { by: string; desc: boolean } | null;
 	onRowClick: ({ item, event }: { item: Item; event: PointerEvent }) => void;
@@ -48,6 +50,7 @@ interface Props {
 	sortField?: string;
 	changeManualSort: (data: any) => Promise<void>;
 	resetPresetAndRefresh: () => Promise<void>;
+	refresh: () => void;
 	selectAll: () => void;
 	filterUser?: Filter;
 	search?: string;
@@ -122,7 +125,7 @@ function removeField(fieldKey: string) {
 </script>
 
 <template>
-	<div class="layout-tabular">
+	<div class="layout-tabular" :data-state="state">
 		<VTable
 			v-if="loading || (items.length > 0 && !error)"
 			ref="table"
@@ -278,13 +281,24 @@ function removeField(fieldKey: string) {
 			</template>
 		</VTable>
 
-		<slot v-else-if="error" name="error" :error="error" :reset="resetPresetAndRefresh" />
+		<template v-else-if="error">
+			<slot name="error" :error="error" :reset="resetPresetAndRefresh" />
+			<div class="error-retry">
+				<VButton small data-testid="items-list-retry" @click="refresh">{{ $t('retry') }}</VButton>
+			</div>
+		</template>
 		<slot v-else-if="itemCount === 0 && (filterUser || search)" name="no-results" />
 		<slot v-else-if="itemCount === 0" name="no-items" />
 	</div>
 </template>
 
 <style lang="scss" scoped>
+.error-retry {
+	display: flex;
+	justify-content: center;
+	margin-block-start: 1rem;
+}
+
 .v-table {
 	--v-table-sticky-offset-top: var(--layout-offset-top);
 
