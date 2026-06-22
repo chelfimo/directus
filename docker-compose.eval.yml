@@ -18,6 +18,10 @@ services:
       DB_CLIENT: 'sqlite3'
       DB_FILENAME: '/directus/database/database.sqlite'
       TELEMETRY: 'false'
+      # Seed directus_settings.project_owner on bootstrap (migration validates it as an email) so the
+      # BSL "set project owner" license banner never shows. That modal overlays drawer-based flows
+      # (e.g. the new-collection wizard) and intercepts clicks during recording. See PR #8 testbot run.
+      PROJECT_OWNER: 'admin@example.com'
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8055/server/health || exit 1']
       interval: 5s
