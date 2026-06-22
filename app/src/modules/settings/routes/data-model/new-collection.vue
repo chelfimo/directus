@@ -1,28 +1,24 @@
 <script setup lang="ts">
 import { DeepPartial, Field, Relation } from '@directus/types';
-import { cloneDeep } from 'lodash';
-import { reactive, ref, watch } from 'vue';
+import { cloneDeep, debounce } from 'lodash';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import api from '@/api';
 import VCheckbox from '@/components/v-checkbox.vue';
-import VDivider from '@/components/v-divider.vue';
 import VDrawer from '@/components/v-drawer.vue';
 import VIcon from '@/components/v-icon/v-icon.vue';
 import VInput from '@/components/v-input.vue';
 import VNotice from '@/components/v-notice.vue';
 import VSelect from '@/components/v-select/v-select.vue';
-import VTabItem from '@/components/v-tab-item.vue';
-import VTab from '@/components/v-tab.vue';
-import VTabsItems from '@/components/v-tabs-items.vue';
-import VTabs from '@/components/v-tabs.vue';
+import { useCollectionDraft, CollectionDraft } from '@/composables/use-collection-draft';
 import { useDialogRoute } from '@/composables/use-dialog-route';
 import { useCollectionsStore } from '@/stores/collections';
 import { useFieldsStore } from '@/stores/fields';
 import { useRelationsStore } from '@/stores/relations';
 import { notify } from '@/utils/notify';
 import { unexpectedError } from '@/utils/unexpected-error';
-import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import NewCollectionWizard from './components/new-collection-wizard.vue';
 
 const defaultSystemFields = {
 	status: {
@@ -79,7 +75,13 @@ const relationsStore = useRelationsStore();
 
 const isOpen = useDialogRoute();
 
-const currentTab = ref(['collection_setup']);
+const stepIndex = ref(0);
+
+const steps = computed(() => [
+	{ id: 'collection', label: t('collection_setup') },
+	{ id: 'primary_key', label: t('primary_key_field') },
+	{ id: 'optional_fields', label: t('optional_system_fields') },
+]);
 
 const collectionName = ref<string | null>(null);
 const singleton = ref(false);
@@ -101,6 +103,76 @@ watch(() => singleton.value, setOptionsForSingleton);
 function setOptionsForSingleton() {
 	systemFields.sort = { ...defaultSystemFields.sort };
 	systemFields.sort.inputDisabled = singleton.value;
+}
+
+// Step 1 requires a collection name; step 2 requires a primary-key column name. The final
+// step has no gate (Submit handles its own loading). canAdvance gates the Next button only.
+const canAdvance = computed(() => {
+	if (stepIndex.value === 0) return !!collectionName.value?.length;
+	if (stepIndex.value === 1) return !!primaryKeyFieldName.value?.length;
+	return true;
+});
+
+const draft = useCollectionDraft();
+
+// Set once the create succeeds so the trailing debounced autosave can't rewrite a cleared draft.
+const committed = ref(false);
+
+function buildDraft(): CollectionDraft {
+	const systemFieldsDraft: CollectionDraft['systemFields'] = {};
+
+	for (const [key, info] of Object.entries(systemFields)) {
+		systemFieldsDraft[key] = { enabled: info.enabled, name: info.name };
+	}
+
+	return {
+		collectionName: collectionName.value,
+		singleton: singleton.value,
+		primaryKeyFieldName: primaryKeyFieldName.value,
+		primaryKeyFieldType: primaryKeyFieldType.value,
+		systemFields: systemFieldsDraft,
+	};
+}
+
+function applyDraft(d: CollectionDraft) {
+	collectionName.value = d.collectionName;
+	singleton.value = d.singleton;
+	primaryKeyFieldName.value = d.primaryKeyFieldName ?? 'id';
+	primaryKeyFieldType.value = d.primaryKeyFieldType ?? 'auto_int';
+
+	for (const [key, info] of Object.entries(d.systemFields ?? {})) {
+		if (systemFields[key as keyof typeof systemFields]) {
+			systemFields[key as keyof typeof systemFields].enabled = info.enabled;
+			systemFields[key as keyof typeof systemFields].name = info.name;
+		}
+	}
+
+	setOptionsForSingleton();
+}
+
+const saveDraft = debounce(() => {
+	if (committed.value) return;
+	draft.save(buildDraft());
+}, 500);
+
+// Restore an interrupted draft on (re)open (DR-UC02-P1).
+onMounted(() => {
+	const existing = draft.load();
+	if (existing) applyDraft(existing);
+});
+
+// Autosave any change across any step.
+watch([collectionName, singleton, primaryKeyFieldName, primaryKeyFieldType, systemFields], saveDraft, {
+	deep: true,
+});
+
+function onApply() {
+	if (stepIndex.value < steps.value.length - 1) {
+		if (canAdvance.value) stepIndex.value += 1;
+		return;
+	}
+
+	if (!saving.value) save();
 }
 
 async function save() {
@@ -139,8 +211,15 @@ async function save() {
 			title: t('collection_created'),
 		});
 
+		// Success: drop the draft so a later create starts fresh (DR-UC02-P2). Cancel any pending
+		// debounced save first so it can't resurrect the cleared draft.
+		committed.value = true;
+		saveDraft.cancel();
+		draft.clear();
+
 		router.replace({ name: 'settings-fields', params: { collection: createdCollectionName } });
 	} catch (error) {
+		// Failure: keep the draft for retry (DR-UC02-P3).
 		unexpectedError(error);
 	} finally {
 		saving.value = false;
@@ -383,17 +462,6 @@ function getSystemRelations() {
 	return relations;
 }
 
-function onApply() {
-	if (currentTab.value[0] === 'optional_system_fields') {
-		if (saving.value) return;
-		save();
-		return;
-	}
-
-	if (!collectionName.value?.length) return;
-
-	currentTab.value = ['optional_system_fields'];
-}
 </script>
 
 <template>
@@ -402,25 +470,23 @@ function onApply() {
 		:model-value="isOpen"
 		class="new-collection"
 		persistent
-		:sidebar-label="currentTab[0] && $t(currentTab[0])"
+		:sidebar-label="steps[stepIndex]?.label"
 		@cancel="router.push({ name: 'settings-collections' })"
 		@apply="onApply"
 	>
-		<template #sidebar>
-			<VTabs v-model="currentTab" vertical>
-				<VTab value="collection_setup">{{ $t('collection_setup') }}</VTab>
-				<VTab value="optional_system_fields" :disabled="!collectionName">
-					{{ $t('optional_system_fields') }}
-				</VTab>
-			</VTabs>
-		</template>
-
-		<VTabsItems v-model="currentTab" class="content">
-			<VTabItem value="collection_setup">
+		<NewCollectionWizard
+			v-model="stepIndex"
+			class="content"
+			:steps="steps"
+			:can-advance="canAdvance"
+			:submitting="saving"
+			@submit="save"
+		>
+			<template #collection>
 				<VNotice>{{ $t('creating_collection_info') }}</VNotice>
 
 				<div class="grid">
-					<div class="field half">
+					<div class="field full">
 						<div class="type-label">
 							{{ $t('name') }}
 							<VIcon v-tooltip="$t('required')" class="required" name="star" sup filled />
@@ -434,11 +500,15 @@ function onApply() {
 						/>
 						<small class="type-note">{{ $t('collection_names_are_case_sensitive') }}</small>
 					</div>
-					<div class="field half">
+					<div class="field full">
 						<div class="type-label">{{ $t('singleton') }}</div>
 						<VCheckbox v-model="singleton" block :label="$t('singleton_label')" />
 					</div>
-					<VDivider class="full" />
+				</div>
+			</template>
+
+			<template #primary_key>
+				<div class="grid">
 					<div class="field half">
 						<div class="type-label">{{ $t('primary_key_field') }}</div>
 						<VInput v-model="primaryKeyFieldName" class="monospace" db-safe :placeholder="$t('a_unique_column_name')" />
@@ -468,8 +538,9 @@ function onApply() {
 						/>
 					</div>
 				</div>
-			</VTabItem>
-			<VTabItem value="optional_system_fields">
+			</template>
+
+			<template #optional_fields>
 				<VNotice>{{ $t('creating_collection_system') }}</VNotice>
 
 				<div class="grid system">
@@ -498,26 +569,8 @@ function onApply() {
 						</VInput>
 					</div>
 				</div>
-			</VTabItem>
-		</VTabsItems>
-
-		<template #actions>
-			<PrivateViewHeaderBarActionButton
-				v-if="currentTab[0] === 'collection_setup'"
-				v-tooltip.bottom="$t('next')"
-				:disabled="!collectionName || collectionName.length === 0"
-				icon="arrow_forward"
-				@click="currentTab = ['optional_system_fields']"
-			/>
-
-			<PrivateViewHeaderBarActionButton
-				v-if="currentTab[0] === 'optional_system_fields'"
-				v-tooltip.bottom="$t('finish_setup')"
-				:loading="saving"
-				icon="check"
-				@click="save"
-			/>
-		</template>
+			</template>
+		</NewCollectionWizard>
 	</VDrawer>
 </template>
 
