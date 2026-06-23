@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Field, LocalType } from '@directus/types';
 import { isNil, orderBy } from 'lodash';
-import { computed, onBeforeMount, onBeforeUnmount, toRefs } from 'vue';
+import { computed, onBeforeMount, onBeforeUnmount, ref, toRefs } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Draggable from 'vuedraggable';
 import FieldSelect from './FieldSelect.vue';
@@ -42,6 +42,23 @@ const lockedFields = computed(() => {
 const usableFields = computed(() => {
 	return parsedFields.value.filter((field) => field.meta?.system !== true);
 });
+
+// Top-level (ungrouped) fields are the draggable set; kept as a computed so the @start/@end
+// handlers can map the sortable index back to the dragged field's key (DR-UC05).
+const topLevelFields = computed(() => usableFields.value.filter((field) => isNil(field?.meta?.group)));
+
+// Observable drag/save lifecycle: the row currently being dragged, and the row whose reorder save
+// is in flight. Bound to data-dragging / data-saving on the field rows.
+const draggingKey = ref<string | null>(null);
+const savingKey = ref<string | null>(null);
+
+function onDragStart(event: { oldIndex?: number }) {
+	draggingKey.value = topLevelFields.value[event.oldIndex ?? -1]?.field ?? null;
+}
+
+function onDragEnd() {
+	draggingKey.value = null;
+}
 
 const addOptions = computed<Array<{ type: LocalType; icon: string; text: any } | { divider: boolean }>>(() => [
 	{
@@ -114,7 +131,16 @@ async function setSort(fields: Field[]) {
 		},
 	}));
 
-	await fieldsStore.updateFields(collection.value, updates);
+	// Mark the dragged row as saving while the (single) PATCH is in flight; cleared once the store
+	// action settles, whether it reconciled or reverted. draggingKey is still set here because @end
+	// fires after @update:model-value.
+	savingKey.value = draggingKey.value;
+
+	try {
+		await fieldsStore.updateFields(collection.value, updates);
+	} finally {
+		savingKey.value = null;
+	}
 }
 
 async function setNestedSort(updates?: Field[]) {
@@ -134,17 +160,26 @@ async function setNestedSort(updates?: Field[]) {
 
 		<Draggable
 			class="field-grid"
-			:model-value="usableFields.filter((field) => isNil(field?.meta?.group))"
+			:model-value="topLevelFields"
 			handle=".drag-handle"
 			:group="{ name: 'fields' }"
 			:set-data="hideDragImage"
 			item-key="field"
 			:animation="150"
+			ghost-class="field-reorder-ghost"
 			v-bind="{ 'force-fallback': true, 'fallback-on-body': true, 'invert-swap': true }"
+			@start="onDragStart"
+			@end="onDragEnd"
 			@update:model-value="setSort"
 		>
 			<template #item="{ element }">
-				<FieldSelect :field="element" :fields="usableFields" @set-nested-sort="setNestedSort" />
+				<FieldSelect
+					:field="element"
+					:fields="usableFields"
+					:data-dragging="element.field === draggingKey ? 'true' : undefined"
+					:data-saving="element.field === savingKey ? 'true' : undefined"
+					@set-nested-sort="setNestedSort"
+				/>
 			</template>
 		</Draggable>
 
@@ -188,6 +223,14 @@ async function setNestedSort(updates?: Field[]) {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 	padding-block-end: 1.375rem;
+}
+
+// Visible drop indicator at the candidate position while dragging (DR-UC05-D2).
+.field-reorder-ghost {
+	opacity: 0.6;
+	outline: var(--theme--border-width) dashed var(--theme--primary);
+	outline-offset: -2px;
+	border-radius: var(--theme--border-radius);
 }
 
 .field-select {
