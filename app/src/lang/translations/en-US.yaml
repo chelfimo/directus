@@ -1438,6 +1438,10 @@ no_layout_collection_selected_yet: No layout/collection selected yet
 batch_delete_confirm: >-
   No items have been selected | Are you sure you want to delete this item? This action can not be undone. | Are you sure
   you want to delete these {count} items? This action can not be undone.
+batch_rollup_header: '{count} of {total} succeeded'
+batch_rollup_all_success: 'All {total} items updated'
+batch_rollup_partial: '{count} of {total} items updated'
+batch_rollup_all_error: 'Failed to update items'
 cancel: Cancel
 no_upscale: Don't upscale images
 no_extensions: No Extensions
@@ -2076,6 +2080,7 @@ permissions: Permissions
 relationship: Relationship
 reset: Reset
 reset_password: Reset Password
+retry: Retry
 revisions: Revisions
 no_revisions: No Revisions Yet
 no_logs: No Logs Yet
