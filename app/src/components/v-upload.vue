@@ -14,14 +14,23 @@ import VDialog from '@/components/v-dialog.vue';
 import VIcon from '@/components/v-icon/v-icon.vue';
 import VInput from '@/components/v-input.vue';
 import VProgressLinear from '@/components/v-progress-linear.vue';
+import VUploadFileRow from '@/components/v-upload-file-row.vue';
 import { emitter, Events } from '@/events';
 import { useFilesStore } from '@/stores/files.js';
 import { useNotificationsStore } from '@/stores/notifications';
 import { useServerStore } from '@/stores/server';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { uploadFile } from '@/utils/upload-file';
-import { uploadFiles } from '@/utils/upload-files';
+import { uploadFiles, type FileUploadHandle, type FileUploadState } from '@/utils/upload-files';
 import DrawerFiles from '@/views/private/components/drawer-files.vue';
+
+interface FileRow {
+	index: number;
+	name: string;
+	state: FileUploadState;
+	progress: number;
+	removed: boolean;
+}
 
 export type UploadController = {
 	start(): void;
@@ -58,7 +67,8 @@ const { info } = useServerStore();
 
 let uploadController: Upload | null = null;
 
-const { uploading, progress, upload, onBrowseSelect, done, numberOfFiles } = useUpload();
+const { uploading, progress, upload, onBrowseSelect, done, numberOfFiles, visibleFileRows, showCancelAll, cancelAll, retryFile } =
+	useUpload();
 const { onDragEnter, onDragLeave, onDrop, dragging } = useDragging();
 const { url, isValidURL, loading: urlLoading, importFromURL } = useURLImport();
 const { setSelection } = useSelection();
@@ -140,6 +150,17 @@ function useUpload() {
 	const filesStore = useFilesStore();
 	const newUpload = filesStore.upload();
 
+	// DR-UC10: per-file rollup for multi-file mode.
+	const fileRows = ref<FileRow[]>([]);
+	let abortHandles: FileUploadHandle[] = [];
+	let lastFiles: globalThis.File[] = [];
+	let lastPreset: Record<string, any> = {};
+
+	const visibleFileRows = computed(() => fileRows.value.filter((row) => !row.removed));
+	const showCancelAll = computed(() =>
+		fileRows.value.some((row) => !row.removed && (row.state === 'queued' || row.state === 'uploading')),
+	);
+
 	return {
 		uploading: newUpload.uploading,
 		progress: newUpload.progress,
@@ -147,7 +168,60 @@ function useUpload() {
 		onBrowseSelect,
 		numberOfFiles: newUpload.numberOfFiles,
 		done: newUpload.done,
+		visibleFileRows,
+		showCancelAll,
+		cancelAll,
+		retryFile,
 	};
+
+	// Cancel all: remove still-queued files, abort in-flight ones (-> cancelled), keep done (DR-UC10-C2).
+	function cancelAll() {
+		for (const row of fileRows.value) {
+			if (row.removed) continue;
+
+			if (row.state === 'queued') {
+				abortHandles[row.index]?.abort();
+				row.removed = true;
+			} else if (row.state === 'uploading') {
+				abortHandles[row.index]?.abort();
+			}
+		}
+	}
+
+	// Per-row retry: re-upload a single errored file (DR-UC10-S3).
+	async function retryFile(index: number) {
+		const file = lastFiles[index];
+		const row = fileRows.value.find((candidate) => candidate.index === index);
+		if (!file || !row) return;
+
+		const controller = new AbortController();
+		abortHandles[index] = {
+			abort: () => {
+				row.state = 'cancelled';
+				controller.abort();
+			},
+		};
+
+		row.removed = false;
+		row.progress = 0;
+		row.state = 'uploading';
+
+		try {
+			const result = await uploadFile(file, {
+				preset: lastPreset,
+				signal: controller.signal,
+				onProgressChange: (percentage) => {
+					row.progress = percentage;
+				},
+			});
+
+			if ((row.state as FileUploadState) === 'cancelled') return;
+			row.state = result ? 'done' : 'error';
+			if (result) emit('input', result);
+		} catch (error: any) {
+			row.state = error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' ? 'cancelled' : 'error';
+		}
+	}
 
 	async function upload(files: FileList) {
 		newUpload.start(files.length);
@@ -161,9 +235,22 @@ function useUpload() {
 			if (!validFiles(files)) return;
 
 			if (props.multiple === true) {
-				const fileSizes = Array.from(files).map((file) => file.size);
+				const fileList = Array.from(files);
+				const fileSizes = fileList.map((file) => file.size);
 				const totalBytes = sum(fileSizes);
 				const fileControllers: (UploadController | null)[] = new Array(files.length).fill(null);
+
+				// Seed the per-file rollup as queued (DR-UC10-L1).
+				lastFiles = fileList;
+				lastPreset = preset;
+				fileRows.value = fileList.map((file, index) => ({
+					index,
+					name: file.name,
+					state: 'queued',
+					progress: 0,
+					removed: false,
+				}));
+				abortHandles = [];
 
 				const controller = {
 					start() {
@@ -174,12 +261,17 @@ function useUpload() {
 					},
 				};
 
-				const uploadedFiles = await uploadFiles(Array.from(files), {
-					maxConcurrency: info.uploads?.maxConcurrency,
+				const uploadedFiles = await uploadFiles(fileList, {
+					// Cap concurrency at min(5, N) when the server doesn't configure it (DR-UC10-C1).
+					maxConcurrency: info.uploads?.maxConcurrency ?? Math.min(5, fileList.length),
 					onProgressChange: (percentages) => {
 						newUpload.progress.value = Math.round(
 							(sum(fileSizes.map((total, i) => total * (percentages[i]! / 100))) / totalBytes) * 100,
 						);
+
+						for (const [i, percentage] of percentages.entries()) {
+							if (fileRows.value[i]) fileRows.value[i]!.progress = percentage;
+						}
 
 						const doneIndices = percentages
 							.map((p, i) => [p, i])
@@ -192,6 +284,14 @@ function useUpload() {
 						for (const idx of doneIndices) {
 							if (fileControllers[idx]) fileControllers[idx] = null;
 						}
+					},
+					onFileStateChange: (states) => {
+						for (const [i, state] of states.entries()) {
+							if (fileRows.value[i]) fileRows.value[i]!.state = state;
+						}
+					},
+					onControllersChange: (handles) => {
+						abortHandles = handles;
 					},
 					onChunkedUpload: (controllers) => {
 						controllers.forEach((controller, i) => (fileControllers[i] = controller));
@@ -492,6 +592,23 @@ defineExpose({ abort });
 				</VDialog>
 			</template>
 		</template>
+
+		<div v-if="multiple && visibleFileRows.length > 0" class="upload-file-list" @click.stop>
+			<div class="upload-file-list-header">
+				<span class="rollup-count">{{ $t('upload_files_indeterminate', { done, total: numberOfFiles }) }}</span>
+				<VButton v-if="showCancelAll" x-small secondary data-testid="upload-cancel-all" @click.stop="cancelAll">
+					{{ $t('cancel_all') }}
+				</VButton>
+			</div>
+			<VUploadFileRow
+				v-for="row in visibleFileRows"
+				:key="row.index"
+				:filename="row.name"
+				:state="row.state"
+				:progress="row.progress"
+				@retry="retryFile(row.index)"
+			/>
+		</div>
 	</div>
 </template>
 
@@ -579,6 +696,21 @@ defineExpose({ abort });
 		inset-block-end: 1.6875rem;
 		inset-inline-start: 1.8125rem;
 		inline-size: calc(100% - 3.625rem);
+	}
+}
+
+.upload-file-list {
+	inline-size: 100%;
+	margin-block-start: 1rem;
+	text-align: start;
+
+	.upload-file-list-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-block-end: 0.5rem;
+		color: var(--theme--foreground-subdued);
+		font-size: 0.85em;
 	}
 }
 </style>
