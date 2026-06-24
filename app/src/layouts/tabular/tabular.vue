@@ -129,6 +129,7 @@ function removeField(fieldKey: string) {
 			v-model="selectionWritable"
 			v-model:headers="tableHeadersWritable"
 			class="table"
+			data-testid="items-table"
 			fixed-header
 			:show-select="showSelect ? showSelect : selection !== undefined"
 			show-resize
@@ -257,6 +258,7 @@ function removeField(fieldKey: string) {
 						<VSkeletonLoader v-if="!loading && loadingItemCount && items.length === limit" type="pagination" />
 						<VPagination
 							v-else-if="totalPages > 1"
+							data-testid="items-pagination"
 							:length="totalPages"
 							:total-visible="7"
 							show-first-last

@@ -21,6 +21,7 @@ import VInfo from '@/components/v-info.vue';
 import { useFlows } from '@/composables/use-flows';
 import { useCollectionPermissions } from '@/composables/use-permissions';
 import { usePreset } from '@/composables/use-preset';
+import { useUrlState } from '@/composables/use-url-state';
 import { usePermissionsStore } from '@/stores/permissions';
 import { getCollectionRoute, getItemRoute } from '@/utils/get-route';
 import { unexpectedError } from '@/utils/unexpected-error';
@@ -75,6 +76,10 @@ const {
 	busy: bookmarkSaving,
 	clearLocalSave,
 } = usePreset(collection, bookmarkID);
+
+// Project filter/sort/page to/from the URL query string so a filtered view is shareable and
+// supports browser back/forward (DR-UC09). Bookmark and other query keys are preserved.
+useUrlState(filter, layoutQuery);
 
 const { layoutWrapper } = useLayout(layout);
 

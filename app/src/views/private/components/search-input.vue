@@ -201,12 +201,13 @@ function emitValue() {
 					clickable
 					class="icon-filter"
 					name="filter_list"
+					data-testid="items-filter-toggle"
 					:disabled
 					@click="toggleFilter"
 				/>
 
 				<TransitionExpand @before-enter="filterBorder = true" @after-leave="filterBorder = false">
-					<div v-show="filterActive" ref="filterElement" class="filter" :class="{ active }">
+					<div v-show="filterActive" ref="filterElement" class="filter" :class="{ active }" data-testid="items-filter">
 						<InterfaceSystemFilter
 							class="filter-input"
 							inline
