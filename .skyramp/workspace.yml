@@ -1,0 +1,36 @@
+# Skyramp Workspace Configuration
+workspace:
+  repoName: chelfimo/directus
+  repoUrl: https://github.com/chelfimo/directus
+metadata:
+  schemaVersion: v1
+  mcpVersion: 0.2.6
+  executorVersion: v1.3.27
+  createdAt: "2026-06-24T01:04:02.509Z"
+  updatedAt: "2026-06-24T01:04:02.516Z"
+services:
+  - serviceName: directus-api-backend
+    language: typescript
+    framework: playwright
+    testDirectory: tests/skyramp/api
+    api:
+      schemaPath: http://localhost:8055/server/openapi.json
+      authType: bearer
+      authHeader: Authorization
+      baseUrl: http://localhost:8055
+    runtimeDetails:
+      serverStartCommand: docker compose -f docker-compose.eval.yml up -d directus
+      runtime: docker
+      dockerNetwork: directus_default
+  - serviceName: directus-app-frontend
+    language: typescript
+    framework: playwright
+    testDirectory: tests/skyramp
+    api:
+      authType: bearer
+      authHeader: Authorization
+      baseUrl: http://localhost:8055
+    runtimeDetails:
+      serverStartCommand: docker compose -f docker-compose.eval.yml up -d directus
+      runtime: docker
+      dockerNetwork: directus_default
