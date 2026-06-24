@@ -20,6 +20,8 @@ export async function uploadFile(
 		preset?: Partial<File>;
 		fileId?: string;
 		requirePreviousUpload?: boolean;
+		/** Abort signal for the non-chunked (axios) upload path, so callers can cancel in-flight uploads (DR-UC10). */
+		signal?: AbortSignal;
 	},
 ): Promise<File | undefined> {
 	const progressHandler = options?.onProgressChange || (() => undefined);
@@ -128,10 +130,12 @@ export async function uploadFile(
 			if (options?.fileId) {
 				response = await api.patch(`/files/${options.fileId}`, formData, {
 					onUploadProgress,
+					signal: options?.signal,
 				});
 			} else {
 				response = await api.post(`/files`, formData, {
 					onUploadProgress,
+					signal: options?.signal,
 				});
 			}
 
@@ -144,7 +148,9 @@ export async function uploadFile(
 			emitter.emit(Events.upload);
 
 			return response.data.data;
-		} catch (error) {
+		} catch (error: any) {
+			// A cancellation is intentional (Cancel All / per-file cancel): don't surface it as an error.
+			if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') throw error;
 			unexpectedError(error);
 		}
 
